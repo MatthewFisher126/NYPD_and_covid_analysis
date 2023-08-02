@@ -1,0 +1,287 @@
+---
+title: "COVID-19 Report"
+author: "MJF"
+date: "2023-07-28"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# {.tabset}
+
+In this notebook we looked at analyzed global, US, and Colorado COVID-19 cases and deaths. Some libraries you will need are: stringr, readr, tidyverse, and lubridate. 
+
+## Identify and import the data
+
+Read in the data.
+```{r get_jhu_data, message = FALSE}
+library(stringr)
+library(readr)
+
+# Save the links and read the csvs.
+url_path = "https://raw.githubusercontent.com/CSSEGISandData/COVID-19/master/csse_covid_19_data/csse_covid_19_time_series/"
+file_names = c("time_series_covid19_confirmed_global.csv", "time_series_covid19_deaths_global.csv", "time_series_covid19_confirmed_US.csv", "time_series_covid19_deaths_US.csv")
+urls = str_c(url_path,file_names)
+urls
+
+# Assign the data to variables
+global_cases = read_csv(urls[1])
+global_deaths = read_csv(urls[2])
+US_cases = read_csv(urls[3])
+US_deaths = read_csv(urls[4])
+
+head(global_cases)
+```
+
+Now we can look at the tables and learn more about the data. 
+
+## Tidy and transforming the data
+
+### Tidying global data
+
+Learning about the global data. 
+
+```{r tidy_data}
+library(tidyverse)
+library(lubridate)
+
+# Tidy global_cases.
+global_cases = global_cases %>% pivot_longer(cols = -c('Province/State', 'Country/Region', Lat, Long), names_to = "date", values_to = "cases") %>% select(-c(Lat, Long))
+head(global_cases)
+
+# Tidy global_deaths.
+global_deaths = global_deaths %>% pivot_longer(cols = -c('Province/State', 'Country/Region', Lat, Long), names_to = "date", values_to = "deaths") %>% select(-c(Lat, Long))
+head(global_deaths)
+
+# Join data.
+global = global_cases %>% full_join(global_deaths) %>% rename(Country_Region = `Country/Region`, Province_State = `Province/State`) %>% mutate(date = mdy(date))
+head(global)
+summary(global)
+
+# Filter for cases.
+global = global %>% filter(cases > 0)
+summary(global)
+
+# Check maximum.
+global %>% filter(cases > 103000000)
+```
+
+We don't need lat and long for this analysis. Also, we want to clean the data a bit when it comes to the date since each date is a column (we want it to be just 1 column for all the dates.) 
+
+### Tidying US cases. 
+
+Now we can do similar tidying with US cases.
+
+```{r us_tidy}
+head(US_cases)
+
+# Tidy US_cases.
+US_cases = US_cases %>% pivot_longer(cols = -(UID:Combined_Key), names_to = "date", values_to = "cases") %>% select(Admin2:cases) %>% mutate(date = mdy(date)) %>% select(-c(Lat, Long_))
+head(US_cases)
+
+
+# Tidy US_deaths.
+head(US_deaths)
+US_deaths = US_deaths %>% pivot_longer(cols = -(UID:Population), names_to = "date", values_to = "deaths") %>% select(Admin2:deaths) %>% mutate(date = mdy(date)) %>% select(-c(Lat, Long_))
+head(US_deaths)
+
+# Join US cases and deaths.
+US = US_cases %>% full_join(US_deaths)
+head(US)
+```
+
+### Adding population to global dataset
+
+Now we need to get population for our global cases just like the US cases.
+
+```{r global_pop}
+# Add Combined_Key column.
+global = global %>% unite("Combined_Key", c(Province_State, Country_Region), sep = ",", na.rm = TRUE, remove = FALSE)
+head(global)
+
+# Get population info.
+uid_lookup_url = "https://raw.githubusercontent.com/CSSEGISandData/COVID-19/master/csse_covid_19_data/UID_ISO_FIPS_LookUp_Table.csv"
+uid = read_csv(uid_lookup_url) %>% select(-c(Lat, Long_, Combined_Key, code3, iso2, iso3, Admin2))
+head(uid)
+
+global = global %>% left_join(uid, by = c("Province_State", "Country_Region")) %>% select(-c(UID, FIPS)) %>% select(Province_State, Country_Region, date, cases, deaths, Population, Combined_Key)
+head(global)
+```
+
+Now that we have tidied our data and joined them, we can visualize, analyze, and model our data. 
+
+## Visualizing, analyzing, and modeling data
+
+### Visualizing global data
+
+We can visualize our global data. 
+
+```{r visualizing_global}
+# Get sum for cases and deaths for each Country_Region.
+global_by_country = global %>% group_by(Country_Region, date) %>% summarize(cases = sum(cases), deaths = sum(deaths), Population = sum(Population)) %>% mutate(deaths_per_mill = deaths *1000000 / Population) %>% select(Country_Region, date, cases, deaths, deaths_per_mill, Population) %>% ungroup()
+head(global_by_country)
+
+# Get cases and deaths for Globe. 
+globe = global_by_country %>% group_by(date) %>% summarize(cases = sum(cases), deaths = sum(deaths), Population = sum(Population)) %>% mutate(deaths_per_mill = deaths *1000000 / Population) %>% select( date, cases, deaths, deaths_per_mill, Population) %>% ungroup()
+head(globe)
+
+# Plot global.
+globe %>% filter(cases > 0) %>% ggplot(aes(x = date, y = cases)) +
+  geom_line(aes(color = "cases")) +
+  geom_point(aes(color = "cases")) +
+  geom_line(aes(y = deaths, color = "deaths")) +
+  geom_point(aes(y = deaths, color = "deaths")) +
+  scale_y_log10() + 
+  theme(legend.position = "bottom", axis.text.x = element_text(angle = 90)) + 
+  labs(title = "COVID19 in Globe", y = NULL)
+
+# Plot a Country - United Kingdom.
+UK = "United Kingdom"
+global_by_country %>% filter(Country_Region == UK) %>%
+  filter(cases > 0) %>%
+  ggplot(aes(x = date, y = cases)) +
+  geom_line(aes(color = "cases")) +
+  geom_point(aes(color = "cases")) +
+  geom_line(aes(y = deaths, color = "deaths")) +
+  geom_point(aes(y = deaths, color = "deaths")) +
+  scale_y_log10() + 
+  theme(legend.position = "bottom", axis.text.x = element_text(angle = 90)) + 
+  labs(title = "COVID19 in UK", y = NULL)
+
+```
+
+For the globe, it seems like after 2021 COVID19 deaths level off but cases still are rising a bit. A similar thing is seen in the UK. 
+
+### Visualizing US data 
+
+Do something similar but for US data. 
+
+```{r visualizing_US}
+# Get sum for cases and deaths for each state.
+US_by_state = US %>% group_by(Province_State, Country_Region, date) %>% summarize(cases = sum(cases), deaths = sum(deaths), Population = sum(Population)) %>% mutate(deaths_per_mill = deaths *1000000 / Population) %>% select(Province_State, Country_Region, date, cases, deaths, deaths_per_mill, Population) %>% ungroup()
+head(US_by_state) # Alabama population is ~ 5.04 million which is close to our number (4.9 million)
+
+# US total for each date.
+US_total = US_by_state %>% group_by(Country_Region, date) %>% summarize(cases = sum(cases), deaths = sum(deaths), Population = sum(Population)) %>% mutate(deaths_per_mill = deaths *1000000 / Population) %>% select(Country_Region, date, cases, deaths, deaths_per_mill, Population) %>% ungroup()
+head(US_total)
+tail(US_total)
+view(US_by_state)
+
+# Plot US_total.
+US_total %>% filter(cases > 0) %>% ggplot(aes(x = date, y = cases)) +
+  geom_line(aes(color = "cases")) +
+  geom_point(aes(color = "cases")) +
+  geom_line(aes(y = deaths, color = "deaths")) +
+  geom_point(aes(y = deaths, color = "deaths")) +
+  scale_y_log10() + 
+  theme(legend.position = "bottom", axis.text.x = element_text(angle = 90)) + 
+  labs(title = "COVID19 in US", y = NULL)
+
+# Plot Colorado.
+CO = "Colorado"
+US_by_state %>% filter(Province_State == CO) %>%
+  filter(cases > 0) %>% 
+  ggplot(aes(x = date, y = cases)) +
+  geom_line(aes(color = "cases")) +
+  geom_point(aes(color = "cases")) +
+  geom_line(aes(y = deaths, color = "deaths")) +
+  geom_point(aes(y = deaths, color = "deaths")) +
+  scale_y_log10() + 
+  theme(legend.position = "bottom", axis.text.x = element_text(angle = 90)) + 
+  labs(title = "COVID19 in Colorado", y = NULL)
+```
+
+For the US, it seems like after 2021 COVID19 deaths level off but cases still are rising a bit until 2022 where the cases start to level off. A similar thing is seen in the Colorado. 
+
+### Analyzing data
+
+We want to confirm if cases have really leveled off. We can do this for the global dataset but just want to focus on the US now.
+
+```{r analyzing_data}
+# Calculate new cases and new deaths. 
+US_by_state = US_by_state %>% mutate(new_cases = cases - lag(cases), new_deaths = deaths - lag(deaths))
+head(US_by_state)
+tail(US_by_state)
+
+US_total = US_total %>% mutate(new_cases = cases - lag(cases), new_deaths = deaths - lag(deaths))
+head(US_total)
+tail(US_total)
+
+# Plot new data for US.
+US_total %>% ggplot(aes(x = date, y = new_cases)) +
+  geom_line(aes(color = "new_cases")) +
+  geom_point(aes(color = "new_cases")) +
+  geom_line(aes(y = new_deaths, color = "new_deaths")) +
+  geom_point(aes(y = new_deaths, color = "new_deaths")) +
+  scale_y_log10() + 
+  theme(legend.position = "bottom", axis.text.x = element_text(angle = 90)) + 
+  labs(title = "COVID19 in US", y = NULL)
+
+# Plot new data for CO
+CO = "Colorado"
+US_by_state %>% filter(Province_State == CO) %>%
+  ggplot(aes(x = date, y = new_cases)) +
+  geom_line(aes(color = "new_cases")) +
+  geom_point(aes(color = "new_cases")) +
+  geom_line(aes(y = new_deaths, color = "new_deaths")) +
+  geom_point(aes(y = new_deaths, color = "new_deaths")) +
+  scale_y_log10() + 
+  theme(legend.position = "bottom", axis.text.x = element_text(angle = 90)) + 
+  labs(title = "COVID19 in US", y = NULL)
+```
+
+For the US, we can see there has been these waves of cases and deaths. The cases seem to level off or even drop and then there will be a spike and a leveling off or drop again. For Colorado, we see these waves too Also, we see that starting in mid 2022, the new_cases and new_deaths mostly drop to 0. 
+
+We also might want to look at the US state totals and see cases and deaths per thousand.
+
+```{r US_state_totals}
+# Get state totals.
+US_state_totals = US_by_state %>% group_by(Province_State) %>% summarize(deaths = max(deaths), cases = max(cases), population = max(Population), cases_per_thou = 1000* cases / population, deaths_per_thou = 1000* deaths / population) %>% filter(cases > 0, deaths > 0)
+head(US_state_totals)
+
+# States with least deaths per thousand.
+US_state_totals %>% slice_min(deaths_per_thou, n = 10)
+
+# States with most deaths per thousand.
+US_state_totals %>% slice_max(deaths_per_thou, n = 10)
+
+```
+
+As for the states with the least deaths, we can see that some of the smaller population areas (islands) had less deaths per thousand. For the states with the most deaths per thousand, we can obviously see our data for Grand Princess is not ideal. Since we are missing information such as population, we get inf for our cases and deaths per thousand. We might want to remove Grand Princess from the data before doing any modeling since there are infs.
+
+### Modeling
+
+We can also try to model our deaths per thousand using our cases per thousand. 
+
+```{r modeling}
+# Remove data which has infs.
+US_state_totals = US_state_totals %>% filter(Province_State != "Grand Princess")
+
+# Create model.
+lm_thous = lm(deaths_per_thou ~ cases_per_thou,data = US_state_totals)
+summary(lm_thous)
+
+# Create prediction.
+US_state_totals = US_state_totals %>% mutate(pred = predict(lm_thous))
+head(US_state_totals)
+
+# Plot predictions.
+US_state_totals %>% ggplot() +
+  geom_point(aes(x = cases_per_thou, y = deaths_per_thou), color = "blue") +
+  geom_point(aes(x = cases_per_thou, y = pred), color = "red") 
+```
+
+Our linear model is statistically significant. However, when looking at the plot, we can see the actual points (blue) are very spread out. We might want to investigate more on why some places have more or less deaths for a certain number of cases. We also might want to consider other predictors to make the prediction of deaths per thousand even better.  
+
+## Bias
+
+Our data and analysis is not without bias. First, we might want to consider the bias of the source. The JHU data set might not be a full representation of the COVID-19 pandemic and we might need to add additional data sets in order to get closer to a better representation. Also, the data might be inflated or deflated where some cases/deaths were reported or not reported. Additionally, there might have been some underlying personal bias but steps such as looking at the data in multiple ways can help mitigate that personal bias.  
+
+
+
+
+
+
+
