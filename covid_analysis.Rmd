@@ -11,11 +11,11 @@ knitr::opts_chunk$set(echo = TRUE)
 
 # {.tabset}
 
-In this notebook we looked at analyzed global, US, and Colorado COVID-19 cases and deaths. Some libraries you will need are: stringr, readr, tidyverse, and lubridate. 
+In this notebook we looked at global, UK, US, and Colorado COVID-19 cases and deaths to see if we can uncover any trends regarding the past few years. Some libraries you will need are: stringr, readr, tidyverse, and lubridate. 
 
 ## Identify and import the data
 
-Read in the data.
+Read in the data from Johns Hopkins COVID-19 cases and deaths. 
 ```{r get_jhu_data, message = FALSE}
 library(stringr)
 library(readr)
