@@ -1,0 +1,249 @@
+---
+title: "NYPD_Shooting_Incident"
+author: "MJF"
+date: "2023-07-18"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+For this project I wanted to answer the question: Has shooting incidents increased in different burrows overtime? 
+Some libraries you will need are: stringr, readr, tidyverse, and lubridate. 
+
+# {.tabset}
+
+## Identify and import the data
+
+Read in the data.
+```{r get_incident_data}
+
+# Save the link and read the csv.
+link = "https://data.cityofnewyork.us/api/views/833y-fsy8/rows.csv?accessType=DOWNLOAD"
+nypd_data = read.csv(link)
+head(nypd_data)
+```
+
+The data contains information about shooting incidents in NYC (INCIDENT_KEY, OCCUR_DATE, OCCUR_TIME, BORO, LOC_OF_OCCUR_DESC, PRECINCT, JURISDICTION_CODE, LOC_CLASSFCTN_DESC, LOCATION_DESC, STATISTICAL_MURDER_FLAG, PERP_AGE_GROUP, PERP_SEX, PERP_RACE, VIC_AGE_GROUP, VIC_SEX, VIC_RACE, X_COORD_CD, Y_COORD_CD, Latitude, Longitude, Lon_Lat). Most importantly it contains information on many kinds of locations, times, and descriptions of the victim and perpetrator. This data could be used to answer many questions including the question we proposed today: Has shooting incidents increased in different burrows overtime? 
+
+## Tidying and Transforming the data
+
+The goal for this analysis is to see if shooting incidents have increased since 2006. So, most of the columns were removed. We could potentially use some of the columns for example some of the location columns to maybe filter out duplications but this might be a little too specific. 
+``` {r tidy}
+library(tidyverse)
+library(lubridate)
+
+# Select the columns we need.
+nypd_data_date_burrow = nypd_data %>% select(INCIDENT_KEY, OCCUR_DATE, OCCUR_TIME, BORO, PRECINCT)
+#nypd_data_date_burrow = nypd_data %>% select(-LOC_OF_OCCUR_DESC, -PRECINCT,-JURISDICTION_CODE, -LOC_CLASSFCTN_DESC, -LOCATION_DESC, -STATISTICAL_MURDER_FLAG, -PERP_AGE_GROUP, -PERP_RACE, -PERP_SEX,-VIC_AGE_GROUP, -VIC_SEX, -VIC_RACE,-X_COORD_CD, -Y_COORD_CD, -Latitude, -Longitude, -Lon_Lat)
+
+# Change the data type for date and time and make BORO a factor.
+nypd_data_date_burrow$OCCUR_DATE = mdy(nypd_data_date_burrow$OCCUR_DATE)
+nypd_data_date_burrow$OCCUR_TIME = hms(nypd_data_date_burrow$OCCUR_TIME)
+nypd_data_date_burrow$BORO = as.factor(nypd_data_date_burrow$BORO)
+head(nypd_data_date_burrow)
+
+# Get a summary of our filtered data.
+summary(nypd_data_date_burrow)
+```
+
+
+There are some things that might need to be filtered or checked. First, checking for any duplicated incidents might be a good idea. We can do this with the a command like `which(duplicated(nypd_data_date_burrow$INCIDENT_KEY))`. Also, some rows have an occurrence time of 0, so it would be good to look into those too. We can filter for rows where the occurrence time is 0 and check the entire row. If the occurrence time is 0 and other important information is missing such as occurrence date or BORO then we would want to remove those. Also, if any BORO or occurrence date info is missing we would want to remove those because we are trying to see if there has been an increase in incidents over time (so we need all of the occurrence dates and BORO information). We can check for NAs in those two columns and if there are any remove them. We also might check for NAs or the minimum for the PRECINCT.
+
+
+```{r Checking_step}
+# Check for duplicate INCIDENT_KEYs.
+nrow(nypd_data_date_burrow)
+incident_dups = nypd_data_date_burrow[which(duplicated(nypd_data_date_burrow$INCIDENT_KEY)),]
+nrow(incident_dups)
+incident_dups = incident_dups[order(incident_dups$INCIDENT_KEY),]
+head(incident_dups, 20)
+
+# There are some duplicates. Get unique keys.
+nypd_no_dups = nypd_data_date_burrow[!duplicated(nypd_data_date_burrow$INCIDENT_KEY),]
+nrow(nypd_no_dups)
+nrow(nypd_data_date_burrow)-nrow(incident_dups)
+
+# Check for 0 occurrence time.
+nypd_no_dups[nypd_no_dups$OCCUR_TIME == 0,] # Seems okay to leave in.
+
+# Check for NAs.
+sum(is.na(nypd_no_dups$OCCUR_DATE))
+sum(is.na(nypd_no_dups$BORO))
+sum(is.na(nypd_no_dups$PRECINCT))
+
+# Check the minimum for PRECINCT.
+nypd_no_dups[nypd_no_dups$PRECINCT == 1,]
+
+```
+
+
+There were just under 6,000 duplicated INCIDENT_KEYs, so after removing the duplicated ones and getting unique keys, we ended up with 21,420 rows. The OCCUR_TIME has 6 rows where the OCCUR_TIME was 0, but when looking at the results, the other columns seemed reasonable, so I decided to leave them in. There were no NAs in the OCCUR_DATE, BORO, or PRECINCT and PRECINCT had data for the area which corresponded to 1. So, I believe this is all the filtering that needs to be done right now to help answer our question. 
+
+
+
+## Visualizing, analyzing, and modeling data
+
+### Visualizing
+
+First, I wanted to plot the number of shooting incidents based on the month-year. So, first I had to make a new column with just the month and the year. I did this using `mutate` which is part of the dplyr package. Next, I made that column into a date data type and was able to group by the month-year and BORO to count the occurrences. Finally, I was able to plot the results.
+```{r line_graph_month}
+# Make a new column with just month and year. 
+nypd_no_dups_my = nypd_no_dups %>% mutate(M_Y_DATE = paste(month(OCCUR_DATE), year(OCCUR_DATE), sep = "-"))
+head(nypd_no_dups_my)
+
+# Make that new column a date data type. 
+nypd_no_dups_my$M_Y_DATE = my(nypd_no_dups_my$M_Y_DATE)
+
+# Count occurrences after grouping by month-year and BORO. 
+nypd_data_counts = nypd_no_dups_my %>%
+  group_by(M_Y_DATE, BORO) %>%
+  summarize(COUNT = n())
+head(nypd_data_counts)
+
+# Plot counts for each BORO across all months and years. 
+p = ggplot(nypd_data_counts, aes(x = M_Y_DATE, y = COUNT, color = BORO)) + geom_line() 
+p + scale_x_date(date_breaks = "1 year", date_labels = "%Y") +
+  theme(axis.text.x = element_text(angle = 60)) + 
+  ggtitle("Counts for each BORO across all months and years")
+```
+
+
+The graph is hard to read since there may be a lot of difference between each month for all of the years. It might be useful to increase the timeline to every quarter or every year but we are still able to get some insight from this. We can see that every borough except Staten Island has this kind of peak and dip for each year. This might be indicating that the middle of the year has more shooting incidents than the beginning or end of the year. In Staten Island, the number of cases do not change very much. Queens and Manhattan have a fairly constant range from about 10-30 over this time period. Brooklyn and Bronx have the biggest swings over time for all of the boroughs. There is also a big spike near the middle of 2020 for all of the boroughs but especially Brooklyn and Bronx. This could be a result of the lock down of COVID-19 or it could be multiple other issues related to the areas. 
+
+
+I did the same thing as above but used every quarter instead of every month.
+```{r line_graph_quarter}
+# Make a new column with just quarter and year. 
+nypd_no_dups_qt= nypd_no_dups %>% mutate(Q_Y_DATE = paste(quarter(OCCUR_DATE), year(OCCUR_DATE), sep = "-"))
+head(nypd_no_dups_qt)
+
+# Make that new column a date data type. 
+nypd_no_dups_qt$Q_Y_DATE = my(nypd_no_dups_qt$Q_Y_DATE)
+
+# Count occurrences after grouping by quarter-year and BORO. 
+nypd_data_counts = nypd_no_dups_qt %>%
+  group_by(Q_Y_DATE, BORO) %>%
+  summarize(COUNT = n())
+head(nypd_data_counts)
+
+# Plot counts for each BORO across all quarters and years. 
+p = ggplot(nypd_data_counts, aes(x = Q_Y_DATE, y = COUNT, color = BORO)) + geom_line()
+p + scale_x_date(date_breaks = "1 year", date_labels = "%Y") +
+  theme(axis.text.x = element_text(angle = 60)) + 
+  ggtitle("Counts for each BORO across all quarters and years")
+
+```
+
+
+We can see the peaks in the beginning of the year this time and then a slow dip for the remaining of the year. Also, we see a big increase for 2020 again in Brooklyn.
+
+
+
+I did the same thing as above but used every year instead of every quarter or month.
+```{r line_graph_year}
+# Make a new column with just year. 
+nypd_no_dups_y = nypd_no_dups %>% mutate(Y_DATE =  as.Date(paste0(year(OCCUR_DATE), "-01-01")))
+head(nypd_no_dups_y)
+
+# Count occurrences after grouping by year and BORO. 
+nypd_data_counts = nypd_no_dups_y %>%
+  group_by(Y_DATE, BORO) %>%
+  summarize(COUNT = n())
+head(nypd_data_counts)
+
+# Plot counts for each BORO across each year. 
+p = ggplot(nypd_data_counts, aes(x = Y_DATE, y = COUNT, color = BORO)) + geom_line()
+p + scale_x_date(date_breaks = "1 year", date_labels = "%Y") +
+  theme(axis.text.x = element_text(angle = 60)) +
+  ggtitle("Counts for each BORO across each year")
+
+
+```
+
+
+We can see that Staten Island stays relatively constant over the years regarding shooting incidents. Queens, Manhattan, Brooklyn, and Bronx all  decrease a bit from 2006-2019 but then increase from 2019-2021, after 2021 there is a small decrease in 2022. One thing that we can see in this graph that we did not in the others is that the number of shooting incidents in 2006 is just as high or almost as high as the big spike in 2020. This was hard to see in the other graphs since the points were spread out. 
+
+
+
+### Analyzing
+We can also look more deeply into the data and not just focus on boroughs but focus on the precinct (location within the boroughs). For this we might want to plot each borough separately and maybe look at the shooting incidents over the entire history for the location. 
+```{r precinct_data}
+# Start with a dataset that we already made. 
+head(nypd_no_dups_y)
+
+# Get the counts and change the BORO to a character data type and the PRECINCT to a factor. 
+nypd_data_counts <- nypd_no_dups_y %>%
+  group_by(BORO, PRECINCT) %>%
+  summarize(COUNT = n())
+head(nypd_data_counts)
+nypd_data_counts$PRECINCT = as.factor(nypd_data_counts$PRECINCT)
+nypd_data_counts$BORO = as.character(nypd_data_counts$BORO)
+
+# Get the total over all of the years. 
+nypd_data_total <- nypd_data_counts %>%
+  group_by(BORO, PRECINCT) %>%
+  summarize(TOTAL = sum(COUNT))
+head(nypd_data_total)
+
+# Plot the counts for each PRECINCT for each BORO. 
+p = ggplot(nypd_data_total, aes(x = PRECINCT, y = TOTAL)) +
+  geom_bar(stat = "identity") +
+  facet_wrap(~BORO, ncol = 2, scales = "free_x")
+p + theme(axis.text.x = element_text(size = 6 )) +
+  ggtitle("Shooting incidents for each precinct")
+```
+
+
+We can see that some precincts have more cases than others, particularly in Brooklyn which has the most shooting incidents. In Brooklyn, we can see that precincts 67, 73, 75, 77, 79, and 81 have higher shooting incidents. We also a similar phenomenon in other boroughs. We might be able to isolate these precincts with higher shoot incidents and map the incidents over time (date). We could then possibly predict why these areas have more shooting incidents than others and develop some way to lower them. 
+
+### Model
+
+We could also predict the number of incidents that will happen for which months in NYC. Since we know which precincts have the most incidents then we could focus intervention efforts in those areas first. We could make a plan to help reduce the shooting incidents in that area. One example could be to increase police activity during those months in those areas. 
+
+```{r model}
+# Get our data and get counts for each month and year.
+head(nypd_no_dups_y)
+
+nypd_data_counts = nypd_no_dups_y %>%
+  group_by(month(OCCUR_DATE), year(OCCUR_DATE)) %>%
+  summarize(COUNT = n())
+head(nypd_data_counts)
+
+# Change the column names and make MONTH a factor.
+colnames(nypd_data_counts) = c("MONTH", "YEAR", "COUNT")
+nypd_data_counts$MONTH = as.factor(nypd_data_counts$MONTH)
+
+# Create our linear model and summarize it. 
+lm_incidents = lm(COUNT ~ MONTH + YEAR, data = nypd_data_counts)
+summary(lm_incidents)
+
+# Predict new data. 
+pred = predict(lm_incidents, newdata = data.frame(MONTH = factor(1:12), YEAR = 2023))
+pred
+
+# Plot new data and old data.
+pred_df = data.frame(pred)
+pred_df$MONTH = 1:12
+colnames(pred_df) = c("COUNT", "MONTH")
+ggplot(data = nypd_data_counts, aes(x = MONTH, y = COUNT)) + geom_point() +
+  geom_point(data = pred_df, aes(x = MONTH, y = COUNT), color = "red") +
+  ggtitle("Shooting incident counts for each month")
+
+nypd_data_counts %>% filter(MONTH==7) %>% summarize(mean(COUNT))
+```
+
+
+We can see in our model that not all months are statistically significant so we might want to add other predictors to the model or change the model slightly. However, we can see that May - October are statistically significant. This means that they are statistically different from the intercept which is actually the value for January. When looking at the predicted values (counts for the new months) we see that it ranges from ~43 (Feb.) to ~130 (July). When looking at the historic data, these numbers seem reasonable. When looking at the plot, we can see our red dots (our predictions) are not in the middle of each month, which is okay. We really need more data to test whether the model can make good predictions for the counts on certain months. Also, the predictions are not just the mean of each month. Testing the month of July, the mean is 147 and the prediction is 128. We might want to pair this with our highest incidents in certain precincts and plan prevention efforts, but based on these predictions we would want to focus on months May - September. 
+
+
+## Conclusion and Bias
+In this analysis, we have investigated the shooting incidents in the boroughs of NYC over time to see if shooting incidents have increased since 2006. We have found that shooting incidents in Queens, Manhattan, Brooklyn, and Bronx all decrease a bit from 2006-2019 but then increase from 2019-2021 back to around the same levels as 2006, and after 2021 there is a small decrease into 2022. Staten Island seems to stay relatively constant over the years. We also found that the middle of the year might have more incidents than in the beginning or end of the year (colder months). Finally, we saw that some areas within the boroughs (precincts) had more shooting incidents than other areas. If we investigated those areas more, we might be able to develop a plan to reduce the shooting incidents there. 
+
+This analysis does not come without bias. For example, regarding this historical data there could have been police bias where the police are in these areas more often causing more reports in certain precincts and not in others. There could also be a reporting bias where some shooting incidents are not recorded for whatever reason. There could also be a sourcing bias for where this data was gathered and more data could be available to complement or add to this data. Finally, there is a personal bias when conducting this analysis and to mitigate that I decided to look at time vs boroughs which I have no affiliation with. 
+
+
+
+
+
